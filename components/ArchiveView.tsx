@@ -1,5 +1,5 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { BlogPost } from '../types';
 import { MONTH_NAMES } from '../constants';
@@ -10,6 +10,8 @@ interface ArchiveViewProps {
 }
 
 const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+
   const archives = useMemo(() => {
     const groups: { [key: string]: BlogPost[] } = {};
     
@@ -20,12 +22,16 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
       groups[key].push(post);
     });
 
-    const yearsMap: { [year: number]: { month: number, posts: BlogPost[] }[] } = {};
+    const yearsMap: { [year: number]: { month: number, monthName: string, posts: BlogPost[] }[] } = {};
     
     Object.keys(groups).forEach(key => {
       const [year, month] = key.split('-').map(Number);
       if (!yearsMap[year]) yearsMap[year] = [];
-      yearsMap[year].push({ month, posts: groups[key] });
+      yearsMap[year].push({ 
+        month, 
+        monthName: MONTH_NAMES[month],
+        posts: groups[key] 
+      });
     });
 
     return Object.keys(yearsMap)
@@ -36,11 +42,25 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
         months: yearsMap[year]
           .sort((a, b) => b.month - a.month)
           .map(m => ({
-            month: MONTH_NAMES[m.month],
+            month: m.month,
+            monthName: m.monthName,
             posts: m.posts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
           }))
       }));
   }, [posts]);
+
+  const navItems = useMemo(() => {
+    const items: { id: string; label: string }[] = [];
+    archives.forEach(yearGroup => {
+      yearGroup.months.forEach(monthGroup => {
+        items.push({
+          id: `archive-${yearGroup.year}-${monthGroup.month}`,
+          label: `${monthGroup.monthName} ${yearGroup.year}`
+        });
+      });
+    });
+    return items;
+  }, [archives]);
 
   const getSyncStatus = (post: BlogPost) => {
     if (!post.lastSyncedAt) return 'unsynced';
@@ -54,13 +74,56 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
     return cleanContent ? cleanContent.split(/\s+/).length : 0;
   };
 
+  const handleSyncClick = async (id: string) => {
+    setSyncingId(id);
+    try {
+      await onSync(id);
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const scrollToSection = (id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      const offset = 140; // Adjust for sticky header
+      const bodyRect = document.body.getBoundingClientRect().top;
+      const elementRect = element.getBoundingClientRect().top;
+      const elementPosition = elementRect - bodyRect;
+      const offsetPosition = elementPosition - offset;
+
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+    }
+  };
+
   return (
-    <div className="animate-fade-in max-w-4xl px-2">
-      <header className="mb-12 md:mb-16">
-        <h2 className="text-3xl md:text-4xl font-serif italic mb-2 md:mb-4">Archives</h2>
+    <div className="animate-fade-in max-w-4xl px-2 relative">
+      <header className="mb-8">
+        <h2 className="text-3xl md:text-4xl font-serif italic mb-2">Archives</h2>
         <div className="h-1 w-16 md:w-20 bg-blue-600 mb-2"></div>
         <p className="text-sm opacity-50">Timeline of your creative journey.</p>
       </header>
+
+      {/* Sticky Navigation */}
+      {navItems.length > 1 && (
+        <div className="sticky top-0 lg:top-0 z-30 -mx-4 px-4 py-4 bg-inherit backdrop-blur-md bg-opacity-80 border-b border-current border-opacity-5 mb-12">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-30 mr-2 whitespace-nowrap">Jump to:</span>
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => scrollToSection(item.id)}
+                className="whitespace-nowrap px-3 py-1.5 rounded-full bg-black/5 dark:bg-white/5 hover:bg-blue-600 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-12 md:space-y-16">
         {archives.map(yearGroup => (
@@ -70,9 +133,9 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
             
             <div className="space-y-8 md:space-y-12">
               {yearGroup.months.map(monthGroup => (
-                <div key={`${yearGroup.year}-${monthGroup.month}`}>
+                <div key={`${yearGroup.year}-${monthGroup.month}`} id={`archive-${yearGroup.year}-${monthGroup.month}`} className="scroll-mt-32">
                   <h4 className="text-lg md:text-xl font-bold mb-4 md:mb-6 flex items-center flex-wrap gap-2">
-                    {monthGroup.month} 
+                    {monthGroup.monthName} 
                     <span className="text-[10px] px-2 py-0.5 rounded bg-black/5 dark:bg-white/5 font-normal opacity-50 uppercase">
                       {monthGroup.posts.length} Posts
                     </span>
@@ -81,6 +144,8 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
                     {monthGroup.posts.map(post => {
                       const status = getSyncStatus(post);
                       const words = getWordCount(post.content);
+                      const isCurrentlySyncing = syncingId === post.id;
+
                       return (
                         <li key={post.id} className="group flex items-center justify-between gap-4">
                           <div className="flex items-baseline space-x-3 md:space-x-4 flex-1">
@@ -107,12 +172,21 @@ const ArchiveView: React.FC<ArchiveViewProps> = ({ posts, onSync }) => {
                               </span>
                             ) : (
                               <button 
-                                onClick={() => onSync(post.id)}
-                                className="flex items-center gap-1.5 text-[9px] uppercase font-black text-blue-500 hover:bg-blue-500 hover:text-white border border-blue-500 px-2 py-1 rounded transition-all"
+                                onClick={() => handleSyncClick(post.id)}
+                                disabled={isCurrentlySyncing}
+                                className={`flex items-center gap-1.5 text-[9px] uppercase font-black border px-2 py-1 rounded transition-all ${
+                                  isCurrentlySyncing 
+                                  ? 'text-gray-400 border-gray-400 cursor-not-allowed' 
+                                  : 'text-blue-500 border-blue-500 hover:bg-blue-500 hover:text-white'
+                                }`}
                                 title={status === 'stale' ? 'Update on GitHub' : 'Save to GitHub'}
                               >
-                                <i className="fa-solid fa-cloud-arrow-up"></i>
-                                {status === 'stale' ? 'Update' : 'Sync'}
+                                {isCurrentlySyncing ? (
+                                  <i className="fa-solid fa-spinner animate-spin"></i>
+                                ) : (
+                                  <i className="fa-solid fa-cloud-arrow-up"></i>
+                                )}
+                                {isCurrentlySyncing ? 'Syncing' : (status === 'stale' ? 'Update' : 'Sync')}
                               </button>
                             )}
                           </div>
